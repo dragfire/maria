@@ -3,6 +3,7 @@ use std::io::{BufRead, Read};
 // Constant declarations
 pub const TAB: char = '\t';
 pub const NEW_LINE: char = '\n';
+pub const SPACE: char = ' ';
 
 #[derive(Debug, PartialEq, Eq)]
 enum Ops {
@@ -40,6 +41,7 @@ impl<R: BufRead> Cradle<R> {
     pub fn new(input: R) -> Self {
         let mut cradle = Cradle { look: '2', input };
         cradle.look = cradle.get_char();
+        cradle.skip_white();
         cradle
     }
 
@@ -54,6 +56,18 @@ impl<R: BufRead> Cradle<R> {
             .unwrap()
     }
 
+    /// Skip over leading White Space
+    pub fn skip_white(&mut self) {
+        while self.is_white() {
+            self.look = self.get_char();
+        }
+    }
+
+    /// Returns true if Lookahead character is TAB or SPACE
+    pub fn is_white(&mut self) -> bool {
+        [TAB, SPACE].iter().any(|w| *w == self.look)
+    }
+
     /// Match a specific input character with Lookahead character
     ///
     /// If it does not match, it will panic
@@ -62,30 +76,42 @@ impl<R: BufRead> Cradle<R> {
             expected(&x.to_string());
         }
         self.look = self.get_char();
+        self.skip_white();
     }
 
     /// Get an Identifier
-    pub fn get_name(&mut self) -> char {
+    pub fn get_name(&mut self) -> String {
         if !self.look.is_alphabetic() {
             expected("Name");
         }
 
-        let look_upcase = self.look.to_ascii_uppercase();
-        self.look = self.get_char();
+        let mut token = String::new();
+        while self.look.is_ascii_alphanumeric() {
+            let look_upcase = self.look.to_ascii_uppercase();
+            token.push(look_upcase);
+            self.look = self.get_char();
+        }
 
-        look_upcase
+        self.skip_white();
+
+        token
     }
 
     /// Get a Number
-    pub fn get_num(&mut self) -> char {
+    pub fn get_num(&mut self) -> String {
         if !self.look.is_ascii_digit() {
             expected("Integer");
         }
 
-        let look = self.look;
-        self.look = self.get_char();
+        let mut value = String::new();
+        while self.look.is_ascii_digit() {
+            value.push(self.look);
+            self.look = self.get_char();
+        }
 
-        look
+        self.skip_white();
+
+        value
     }
 
     /// Output a string with Tab
@@ -307,5 +333,15 @@ mod tests {
         let input = b"b=2+a*3/2-b*(4/6) ";
         let mut c = Cradle::new(&input[..]);
         c.assignment();
+    }
+
+    #[test]
+    fn test_tokens_skip() {
+        let input = b"variable = 2 * 3 / (function() + func()) * (x()/2)     \n";
+        let mut c = Cradle::new(&input[..]);
+        c.assignment();
+        if c.look != NEW_LINE {
+            expected("NEW_LINE");
+        }
     }
 }
