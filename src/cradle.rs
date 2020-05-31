@@ -4,18 +4,22 @@ use std::io::{BufRead, Read};
 pub const TAB: char = '\t';
 
 #[derive(Debug, PartialEq, Eq)]
-enum AddOps {
+enum Ops {
     ADD,
     SUB,
+    MUL,
+    DIV,
     INVALID,
 }
 
-impl From<char> for AddOps {
+impl From<char> for Ops {
     fn from(c: char) -> Self {
         match c {
-            '+' => AddOps::ADD,
-            '-' => AddOps::SUB,
-            _ => AddOps::INVALID,
+            '+' => Ops::ADD,
+            '-' => Ops::SUB,
+            '*' => Ops::MUL,
+            '/' => Ops::DIV,
+            _ => Ops::INVALID,
         }
     }
 }
@@ -94,21 +98,6 @@ impl<R: BufRead> Cradle<R> {
         println!();
     }
 
-    /// Recognize and Translate Add
-    pub fn add(&mut self) {
-        self.match_char('+');
-        self.term();
-        self.emitln("ADD D1,D0");
-    }
-
-    /// Recognize and Translate Add
-    pub fn subtract(&mut self) {
-        self.match_char('-');
-        self.term();
-        self.emitln("SUB D1,D0");
-        self.emitln("NEG D0");
-    }
-
     /// Parse and Translate a Math Expression
     ///
     ///         1+2
@@ -119,18 +108,18 @@ impl<R: BufRead> Cradle<R> {
     ///
     pub fn expression(&mut self) {
         self.term();
-        let ops = vec![AddOps::ADD, AddOps::SUB];
+        let ops = vec![Ops::ADD, Ops::SUB];
 
-        while ops.iter().any(|val| *val == AddOps::from(self.look)) {
-            self.emitln("MOVE D0,D1");
-            match AddOps::from(self.look) {
-                AddOps::ADD => {
+        while ops.iter().any(|val| *val == Ops::from(self.look)) {
+            self.emitln("MOVE D0,-(SP)");
+            match Ops::from(self.look) {
+                Ops::ADD => {
                     self.add();
                 }
-                AddOps::SUB => {
+                Ops::SUB => {
                     self.subtract();
                 }
-                AddOps::INVALID => {
+                _ => {
                     expected("Addop");
                 }
             }
@@ -138,9 +127,73 @@ impl<R: BufRead> Cradle<R> {
     }
 
     /// Represent <term>
+    ///
+    /// <mulop> -> *, /
+    ///
+    /// <term> ::= <factor> [<mulop> <factor>]*
     pub fn term(&mut self) {
-        let num = self.get_num();
-        self.emitln(&format!("MOVE #{},D0", num));
+        self.factor();
+        let ops = vec![Ops::DIV, Ops::MUL];
+        while ops.iter().any(|op| *op == Ops::from(self.look)) {
+            self.emitln("MOVE D0,-(SP)");
+            match Ops::from(self.look) {
+                Ops::MUL => {
+                    self.multiply();
+                }
+                Ops::DIV => {
+                    self.divide();
+                }
+                _ => {
+                    expected("Mulop");
+                }
+            }
+        }
+    }
+
+    /// Represent <factor>
+    ///
+    /// <factor> ::= (<expression>)
+    ///
+    /// This supports parentheesis, like (2+3)/(6*2)
+    pub fn factor(&mut self) {
+        if self.look == '(' {
+            self.match_char('(');
+            self.expression();
+            self.match_char(')');
+        } else {
+            let num = self.get_num();
+            self.emitln(&format!("MOVE #{},D0", num));
+        }
+    }
+
+    /// Recognize and Translate Multiply
+    pub fn multiply(&mut self) {
+        self.match_char('*');
+        self.factor();
+        self.emitln("MULS (SP)+,D0");
+    }
+
+    /// Recognize and Translate Divide
+    pub fn divide(&mut self) {
+        self.match_char('/');
+        self.factor();
+        self.emitln("MOVE (SP)+,D1");
+        self.emitln("DIVS D1,D0");
+    }
+
+    /// Recognize and Translate Add
+    pub fn add(&mut self) {
+        self.match_char('+');
+        self.term();
+        self.emitln("ADD (SP)+,D0");
+    }
+
+    /// Recognize and Translate Subtract
+    pub fn subtract(&mut self) {
+        self.match_char('-');
+        self.term();
+        self.emitln("SUB (SP)+,D0");
+        self.emitln("NEG D0");
     }
 }
 
@@ -155,7 +208,7 @@ mod tests {
     // TODO: assert with generated machine code
     #[test]
     fn test_valid_expression() {
-        let input = b"2+2 ";
+        let input = b"2+3-4 ";
         let mut c = Cradle::new(&input[..]);
         c.expression();
     }
@@ -170,6 +223,20 @@ mod tests {
     #[test]
     fn test_single_expression() {
         let input = b"1 ";
+        let mut c = Cradle::new(&input[..]);
+        c.expression();
+    }
+
+    #[test]
+    fn test_with_mulops() {
+        let input = b"2+3*5-6/3 ";
+        let mut c = Cradle::new(&input[..]);
+        c.expression();
+    }
+
+    #[test]
+    fn test_with_paren() {
+        let input = b"(((2+3)*5)-6)/3 ";
         let mut c = Cradle::new(&input[..]);
         c.expression();
     }
