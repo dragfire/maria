@@ -4,5 +4,8 @@ fn main() {
     let stdio = std::io::stdin();
     let input = stdio.lock();
     let mut c = Cradle::new(input);
-    c.expression();
+    c.assignment();
+    if c.look != '\n' {
+        maria::expected("Newline");
+    }
 }

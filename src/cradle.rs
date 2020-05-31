@@ -2,6 +2,7 @@ use std::io::{BufRead, Read};
 
 // Constant declarations
 pub const TAB: char = '\t';
+pub const NEW_LINE: char = '\n';
 
 #[derive(Debug, PartialEq, Eq)]
 enum Ops {
@@ -140,6 +141,15 @@ impl<R: BufRead> Cradle<R> {
         }
     }
 
+    /// Parse and Translate an Assignment statement
+    pub fn assignment(&mut self) {
+        let name = self.get_name();
+        self.match_char('=');
+        self.expression();
+        self.emitln(&format!("LEA {}(PC),A0", name));
+        self.emitln(&"MOVE D0,(A0)");
+    }
+
     /// Represent <term>
     ///
     /// <mulop> -> *, /
@@ -165,17 +175,34 @@ impl<R: BufRead> Cradle<R> {
 
     /// Represent <factor>
     ///
-    /// <factor> ::= (<expression>)
+    /// <factor> ::= <number> | (<expression>)
     ///
-    /// This supports parentheesis, like (2+3)/(6*2)
+    /// This supports parenthesis, like (2+3)/(6*2)
+    ///
+    /// We can support variables also, i.e b * b + 4 * a * c:
+    /// <factor> ::= <number> | (<expression>) | <variable>
     pub fn factor(&mut self) {
         if self.look == '(' {
             self.match_char('(');
             self.expression();
             self.match_char(')');
+        } else if self.look.is_alphabetic() {
+            self.ident();
         } else {
             let num = self.get_num();
             self.emitln(&format!("MOVE #{},D0", num));
+        }
+    }
+
+    /// Deal with variable and function calls
+    pub fn ident(&mut self) {
+        let name = self.get_name();
+        if self.look == '(' {
+            self.match_char('(');
+            self.match_char(')');
+            self.emitln(&format!("BSR {}", name));
+        } else {
+            self.emitln(&format!("MOVE {}(PC),D0", name));
         }
     }
 
@@ -210,7 +237,7 @@ impl<R: BufRead> Cradle<R> {
     }
 }
 
-fn expected(x: &str) {
+pub fn expected(x: &str) {
     panic!("{} Expected", x);
 }
 
@@ -259,5 +286,26 @@ mod tests {
         let input = b"-1 ";
         let mut c = Cradle::new(&input[..]);
         c.expression();
+    }
+
+    #[test]
+    fn test_with_variables() {
+        let input = b"b-1+a*2+(b/c) ";
+        let mut c = Cradle::new(&input[..]);
+        c.expression();
+    }
+
+    #[test]
+    fn test_func_identifier() {
+        let input = b"a+2*x() ";
+        let mut c = Cradle::new(&input[..]);
+        c.expression();
+    }
+
+    #[test]
+    fn test_assignment() {
+        let input = b"b=2+a*3/2-b*(4/6) ";
+        let mut c = Cradle::new(&input[..]);
+        c.assignment();
     }
 }
