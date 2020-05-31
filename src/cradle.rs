@@ -98,6 +98,18 @@ impl<R: BufRead> Cradle<R> {
         println!();
     }
 
+    /// Check if lookahead character is Mulop: * or /
+    pub fn is_mulop(&mut self) -> bool {
+        let ops = vec![Ops::DIV, Ops::MUL];
+        ops.iter().any(|op| *op == Ops::from(self.look))
+    }
+
+    /// Check if lookahead character is Addop: + or -
+    pub fn is_addop(&mut self) -> bool {
+        let ops = vec![Ops::ADD, Ops::SUB];
+        ops.iter().any(|val| *val == Ops::from(self.look))
+    }
+
     /// Parse and Translate a Math Expression
     ///
     ///         1+2
@@ -107,10 +119,12 @@ impl<R: BufRead> Cradle<R> {
     /// <expression> ::= <term> [<addop> <term>]*
     ///
     pub fn expression(&mut self) {
-        self.term();
-        let ops = vec![Ops::ADD, Ops::SUB];
-
-        while ops.iter().any(|val| *val == Ops::from(self.look)) {
+        if self.is_addop() {
+            self.emitln("CLR D0");
+        } else {
+            self.term();
+        }
+        while self.is_addop() {
             self.emitln("MOVE D0,-(SP)");
             match Ops::from(self.look) {
                 Ops::ADD => {
@@ -133,8 +147,7 @@ impl<R: BufRead> Cradle<R> {
     /// <term> ::= <factor> [<mulop> <factor>]*
     pub fn term(&mut self) {
         self.factor();
-        let ops = vec![Ops::DIV, Ops::MUL];
-        while ops.iter().any(|op| *op == Ops::from(self.look)) {
+        while self.is_mulop() {
             self.emitln("MOVE D0,-(SP)");
             match Ops::from(self.look) {
                 Ops::MUL => {
@@ -237,6 +250,13 @@ mod tests {
     #[test]
     fn test_with_paren() {
         let input = b"(((2+3)*5)-6)/3 ";
+        let mut c = Cradle::new(&input[..]);
+        c.expression();
+    }
+
+    #[test]
+    fn test_unary_minus() {
+        let input = b"-1 ";
         let mut c = Cradle::new(&input[..]);
         c.expression();
     }
