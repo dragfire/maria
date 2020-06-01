@@ -35,13 +35,20 @@ pub struct Cradle<R> {
 
     /// Input reader
     pub input: R,
+
+    /// Label count, used in control statements
+    pub lcount: usize,
 }
 
 impl<R: BufRead> Cradle<R> {
     pub fn new(input: R) -> Self {
-        let mut cradle = Cradle { look: '2', input };
+        let mut cradle = Cradle {
+            look: '2',
+            input,
+            lcount: 0,
+        };
         cradle.look = cradle.get_char();
-        cradle.skip_white();
+        cradle.other();
         cradle
     }
 
@@ -68,6 +75,12 @@ impl<R: BufRead> Cradle<R> {
         [TAB, SPACE].iter().any(|w| *w == self.look)
     }
 
+    /// Recognize and Translate an "Other"
+    pub fn other(&mut self) {
+        let name = self.get_name();
+        self.emitln(&name.to_string());
+    }
+
     /// Match a specific input character with Lookahead character
     ///
     /// If it does not match, it will panic
@@ -76,25 +89,18 @@ impl<R: BufRead> Cradle<R> {
             expected(&x.to_string());
         }
         self.look = self.get_char();
-        self.skip_white();
     }
 
     /// Get an Identifier
-    pub fn get_name(&mut self) -> String {
+    pub fn get_name(&mut self) -> char {
         if !self.look.is_alphabetic() {
             expected("Name");
         }
 
-        let mut token = String::new();
-        while self.look.is_ascii_alphanumeric() {
-            let look_upcase = self.look.to_ascii_uppercase();
-            token.push(look_upcase);
-            self.look = self.get_char();
-        }
+        let look_upcase = self.look.to_ascii_uppercase();
+        self.look = self.get_char();
 
-        self.skip_white();
-
-        token
+        look_upcase
     }
 
     /// Get a Number
@@ -146,25 +152,7 @@ impl<R: BufRead> Cradle<R> {
     /// <expression> ::= <term> [<addop> <term>]*
     ///
     pub fn expression(&mut self) {
-        if self.is_addop() {
-            self.emitln("CLR D0");
-        } else {
-            self.term();
-        }
-        while self.is_addop() {
-            self.emitln("MOVE D0,-(SP)");
-            match Ops::from(self.look) {
-                Ops::ADD => {
-                    self.add();
-                }
-                Ops::SUB => {
-                    self.subtract();
-                }
-                _ => {
-                    expected("Addop");
-                }
-            }
-        }
+        self.emitln("<expr>");
     }
 
     /// Parse and Translate an Assignment statement
@@ -173,7 +161,7 @@ impl<R: BufRead> Cradle<R> {
         self.match_char('=');
         self.expression();
         self.emitln(&format!("LEA {}(PC),A0", name));
-        self.emitln(&"MOVE D0,(A0)");
+        self.emitln("MOVE D0,(A0)");
     }
 
     /// Represent <term>
@@ -261,6 +249,141 @@ impl<R: BufRead> Cradle<R> {
         self.emitln("SUB (SP)+,D0");
         self.emitln("NEG D0");
     }
+
+    /// Parse and Translate a Program
+    pub fn do_program(&mut self) {
+        self.block();
+        if self.look != 'e' {
+            expected("End");
+        }
+        self.emitln("END");
+    }
+
+    /// Recognize and Translate a Statement Block
+    pub fn block(&mut self) {
+        while !['e', 'l', 'u'].iter().any(|c| *c == self.look) {
+            match self.look {
+                'i' => self.do_if(),
+                'w' => self.do_while(),
+                'p' => self.do_loop(),
+                'r' => self.do_repeat(),
+                'f' => self.do_for(),
+                'd' => self.do_do(),
+                _ => self.other(),
+            }
+        }
+    }
+
+    /// Parse and Translate a Boolean Condition
+    pub fn condition(&mut self) {
+        self.emitln("<condition>");
+    }
+
+    /// Recognize and Translate an IF Construct
+    pub fn do_if(&mut self) {
+        self.match_char('i');
+        let label = self.new_label();
+        let mut label2 = label.to_string();
+        self.condition();
+        self.emitln(&format!("BEQ {}", &label));
+        self.block();
+        if self.look == 'l' {
+            self.match_char('l');
+            label2 = self.new_label();
+            self.emitln(&format!("BRA {}", label2));
+            self.post_label(&label);
+            self.block();
+        }
+        self.match_char('e');
+        self.post_label(&label2);
+    }
+
+    /// Recognize and Translate a WHILE Statement
+    pub fn do_while(&mut self) {
+        self.match_char('w');
+        let l1 = self.new_label();
+        let l2 = self.new_label();
+        self.post_label(&l1);
+        self.condition();
+        self.emitln(&format!("BEQ {}", l2));
+        self.block();
+        self.match_char('e');
+        self.emitln(&format!("BRA {}", l1));
+        self.post_label(&l2);
+    }
+
+    /// Parse and Translate a LOOP Statement
+    pub fn do_loop(&mut self) {
+        self.match_char('p');
+        let label = self.new_label();
+        self.post_label(&label);
+        self.block();
+        self.match_char('e');
+        self.emitln(&format!("BRA {}", &label));
+    }
+
+    /// Parse and Translate a REPEAT Statement
+    pub fn do_repeat(&mut self) {
+        self.match_char('r');
+        let label = self.new_label();
+        self.post_label(&label);
+        self.block();
+        self.match_char('u');
+        self.condition();
+        self.emitln(&format!("BEQ {}", label));
+    }
+
+    /// Parse and Translate a FOR statement
+    pub fn do_for(&mut self) {
+        self.match_char('f');
+        let l1 = self.new_label();
+        let l2 = self.new_label();
+        let name = self.get_name();
+        self.match_char('=');
+        self.expression();
+        self.emitln("SUBQ #1,D0");
+        self.emitln(&format!("LEA {}(PC),A0", name));
+        self.emitln("MOVE DO,(A0)");
+        self.expression();
+        self.emitln("MOVE DO,-(SP)");
+        self.post_label(&l1);
+        self.emitln(&format!("LEA {}(PC),A0", name));
+        self.emitln("MOVE (A0),D0");
+        self.emitln("MOVE #1,D0");
+        self.emitln("MOVE DO,(A0)");
+        self.emitln("CMP (SP),(A0)");
+        self.emitln(&format!("BGT {}", l2));
+        self.block();
+        self.match_char('e');
+        self.emitln(&format!("BRA {}", l1));
+        self.post_label(&l2);
+        self.emitln("ADDQ #2,SP");
+    }
+
+    /// Parse and Translate a DO Statement
+    pub fn do_do(&mut self) {
+        self.match_char('d');
+        let label = self.new_label();
+        self.expression();
+        self.emitln("SUBQ #1,D0");
+        self.post_label(&label);
+        self.emitln("MOVE D0,-(SP)");
+        self.block();
+        self.emitln("MOVE (SP)+,D0");
+        self.emitln(&format!("DBRA D0,{}", label));
+    }
+
+    /// Generate a Unique Label
+    pub fn new_label(&mut self) -> String {
+        let label = format!("L{}", &usize::to_string(&self.lcount));
+        self.lcount += 1;
+        label
+    }
+
+    /// Post a label to Output
+    pub fn post_label(&mut self, label: &str) {
+        println!("{}:", label);
+    }
 }
 
 pub fn expected(x: &str) {
@@ -271,77 +394,10 @@ pub fn expected(x: &str) {
 mod tests {
     use super::*;
 
-    // TODO: assert with generated machine code
     #[test]
-    fn test_valid_expression() {
-        let input = b"2+3-4 ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_invalid_expression() {
-        let input = b"2aa ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_single_expression() {
-        let input = b"1 ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_with_mulops() {
-        let input = b"2+3*5-6/3 ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_with_paren() {
-        let input = b"(((2+3)*5)-6)/3 ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_unary_minus() {
-        let input = b"-1 ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_with_variables() {
-        let input = b"b-1+a*2+(b/c) ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_func_identifier() {
-        let input = b"a+2*x() ";
-        let mut c = Cradle::new(&input[..]);
-        c.expression();
-    }
-
-    #[test]
-    fn test_assignment() {
-        let input = b"b=2+a*3/2-b*(4/6) ";
-        let mut c = Cradle::new(&input[..]);
-        c.assignment();
-    }
-
-    #[test]
-    fn test_tokens_skip() {
-        let input = b"variable = 2 * 3 / (function() + func()) * (x()/2)\n";
-        let mut c = Cradle::new(&input[..]);
-        c.assignment();
-        if c.look != NEW_LINE {
-            expected("NEW_LINE");
-        }
+    fn test_control_constructs() {
+        let inp = b"afi=bece\n";
+        let mut c = Cradle::new(&inp[..]);
+        c.do_program();
     }
 }
