@@ -252,7 +252,7 @@ impl<R: BufRead> Cradle<R> {
 
     /// Parse and Translate a Program
     pub fn do_program(&mut self) {
-        self.block();
+        self.block("");
         if self.look != 'e' {
             expected("End");
         }
@@ -260,15 +260,16 @@ impl<R: BufRead> Cradle<R> {
     }
 
     /// Recognize and Translate a Statement Block
-    pub fn block(&mut self) {
+    pub fn block(&mut self, label: &str) {
         while !['e', 'l', 'u'].iter().any(|c| *c == self.look) {
             match self.look {
-                'i' => self.do_if(),
+                'i' => self.do_if(&label),
                 'w' => self.do_while(),
                 'p' => self.do_loop(),
                 'r' => self.do_repeat(),
                 'f' => self.do_for(),
                 'd' => self.do_do(),
+                'b' => self.do_break(label),
                 _ => self.other(),
             }
         }
@@ -279,20 +280,30 @@ impl<R: BufRead> Cradle<R> {
         self.emitln("<condition>");
     }
 
+    /// Parse and Translate a BREAK
+    pub fn do_break(&mut self, label: &str) {
+        self.match_char('b');
+        if label != "" {
+            self.emitln(&format!("BRA {}", label));
+        } else {
+            panic!("No loop to break from");
+        }
+    }
+
     /// Recognize and Translate an IF Construct
-    pub fn do_if(&mut self) {
+    pub fn do_if(&mut self, label: &str) {
         self.match_char('i');
-        let label = self.new_label();
-        let mut label2 = label.to_string();
+        let label1 = self.new_label();
+        let mut label2 = label1.to_string();
         self.condition();
-        self.emitln(&format!("BEQ {}", &label));
-        self.block();
+        self.emitln(&format!("BEQ {}", &label1));
+        self.block(label);
         if self.look == 'l' {
             self.match_char('l');
             label2 = self.new_label();
             self.emitln(&format!("BRA {}", label2));
-            self.post_label(&label);
-            self.block();
+            self.post_label(&label1);
+            self.block(label);
         }
         self.match_char('e');
         self.post_label(&label2);
@@ -306,7 +317,7 @@ impl<R: BufRead> Cradle<R> {
         self.post_label(&l1);
         self.condition();
         self.emitln(&format!("BEQ {}", l2));
-        self.block();
+        self.block(&l2);
         self.match_char('e');
         self.emitln(&format!("BRA {}", l1));
         self.post_label(&l2);
@@ -315,22 +326,26 @@ impl<R: BufRead> Cradle<R> {
     /// Parse and Translate a LOOP Statement
     pub fn do_loop(&mut self) {
         self.match_char('p');
-        let label = self.new_label();
-        self.post_label(&label);
-        self.block();
+        let l1 = self.new_label();
+        let l2 = self.new_label();
+        self.post_label(&l1);
+        self.block(&l2);
         self.match_char('e');
-        self.emitln(&format!("BRA {}", &label));
+        self.emitln(&format!("BRA {}", &l1));
+        self.post_label(&l2);
     }
 
     /// Parse and Translate a REPEAT Statement
     pub fn do_repeat(&mut self) {
         self.match_char('r');
-        let label = self.new_label();
-        self.post_label(&label);
-        self.block();
+        let l1 = self.new_label();
+        let l2 = self.new_label();
+        self.post_label(&l1);
+        self.block(&l2);
         self.match_char('u');
         self.condition();
-        self.emitln(&format!("BEQ {}", label));
+        self.emitln(&format!("BEQ {}", l1));
+        self.post_label(&l2);
     }
 
     /// Parse and Translate a FOR statement
@@ -353,7 +368,7 @@ impl<R: BufRead> Cradle<R> {
         self.emitln("MOVE DO,(A0)");
         self.emitln("CMP (SP),(A0)");
         self.emitln(&format!("BGT {}", l2));
-        self.block();
+        self.block(&l2);
         self.match_char('e');
         self.emitln(&format!("BRA {}", l1));
         self.post_label(&l2);
@@ -363,14 +378,18 @@ impl<R: BufRead> Cradle<R> {
     /// Parse and Translate a DO Statement
     pub fn do_do(&mut self) {
         self.match_char('d');
-        let label = self.new_label();
+        let l1 = self.new_label();
+        let l2 = self.new_label();
         self.expression();
         self.emitln("SUBQ #1,D0");
-        self.post_label(&label);
+        self.post_label(&l1);
         self.emitln("MOVE D0,-(SP)");
-        self.block();
+        self.block(&l2);
         self.emitln("MOVE (SP)+,D0");
-        self.emitln(&format!("DBRA D0,{}", label));
+        self.emitln(&format!("DBRA D0,{}", l1));
+        self.emitln("SUBQ #2,SP");
+        self.post_label(&l2);
+        self.emitln("ADDQ #2,SP");
     }
 
     /// Generate a Unique Label
@@ -396,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_control_constructs() {
-        let inp = b"afi=bece\n";
+        let inp = b"afi=xikbeece\n";
         let mut c = Cradle::new(&inp[..]);
         c.do_program();
     }
